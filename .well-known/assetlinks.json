@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "io.github.prossp.blatycnc",
+    "sha256_cert_fingerprints": ["F7:75:75:88:B7:8A:A0:10:B5:B8:71:EF:12:B6:5C:13:7E:03:6E:21:0D:B1:3D:A9:81:7A:BD:86:33:93:25:59"]
+  }
+}]
