@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "blaty-cnc-v4";
+const CACHE = "blaty-cnc-v5";
 const SHARED_CACHE = "shared-file";
 const SHARED_KEY = "shared-dxf";
 const SHELL = [

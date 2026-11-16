@@ -785,17 +785,22 @@ async function shareResult() {
   }
 }
 
-// plik przekazany przez Android Share Target (zapisany przez service worker w Cache API)
-async function loadSharedFile() {
-  $("logPanel").classList.remove("hidden");
+// plik przekazany przez Android Share Target (zapisany przez service worker w Cache API).
+// expected=true, gdy URL ma ?share-target=1; strona sprawdza cache także bez parametru,
+// bo TWA potrafi zgubić parametr przy nawigacji po udostępnieniu.
+async function loadSharedFile(expected) {
   try {
     if (!("caches" in window)) throw new Error("brak obsługi Cache API");
     const cache = await caches.open("shared-file");
     const res = await cache.match("shared-dxf");
     if (!res) {
-      log("BŁĄD: nie znaleziono udostępnionego pliku (spróbuj udostępnić go ponownie lub wybierz ręcznie).", "err");
+      if (expected) {
+        $("logPanel").classList.remove("hidden");
+        log("BŁĄD: nie znaleziono udostępnionego pliku (spróbuj udostępnić go ponownie lub wybierz ręcznie).", "err");
+      }
       return;
     }
+    $("logPanel").classList.remove("hidden");
     let name = "udostepniony.dxf";
     try { name = decodeURIComponent(res.headers.get("X-File-Name") || name); } catch (e) {}
     const blob = await res.blob();
@@ -806,6 +811,7 @@ async function loadSharedFile() {
       else log(`Udostępniony plik: ${name} — brak warstwy ${DEFAULT_LAYER}, wybierz warstwę ręcznie.`, "warn");
     });
   } catch (err) {
+    $("logPanel").classList.remove("hidden");
     log("BŁĄD odczytu udostępnionego pliku: " + err.message, "err");
   }
 }
@@ -813,7 +819,12 @@ async function loadSharedFile() {
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(err => console.warn("SW:", err));
 }
-if (new URLSearchParams(location.search).get("share-target") === "1") loadSharedFile();
+// sprawdzaj udostępniony plik przy każdym starcie (parametr tylko steruje komunikatem błędu)
+loadSharedFile(new URLSearchParams(location.search).get("share-target") === "1");
+// oraz gdy strona wraca na wierzch (TWA może nie przeładować strony przy kolejnym udostępnieniu)
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") loadSharedFile(false);
+});
 
 $("btnShare").addEventListener("click", shareResult);
 $("dropzone").addEventListener("click", () => $("fileInput").click());
