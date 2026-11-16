@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blaty CNC — przygotowanie DXF pod maszynę</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#123c7c">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --blue: #1a56b0; --blue-dark: #123c7c; --red: #c62817;
+    --bg: #f2f4f8; --panel: #ffffff; --border: #d6dbe4; --text: #1c2330;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, Arial, sans-serif; font-size: 15px;
+  }
+  header {
+    background: var(--blue-dark); color: #fff; padding: 14px 24px;
+  }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  header p { margin: 4px 0 0; font-size: 13px; opacity: .85; }
+  main { max-width: 1100px; margin: 0 auto; padding: 18px 16px 40px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  #dropzone {
+    border: 2px dashed #9db1d0; border-radius: 10px; padding: 34px 16px;
+    text-align: center; color: #45536e; cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  #dropzone.drag { background: #e5edfb; border-color: var(--blue); }
+  #dropzone strong { color: var(--blue); }
+  #fileInput { display: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  label { font-weight: 600; font-size: 14px; }
+  select, input[type=number] {
+    padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px;
+    font-size: 14px; background: #fff;
+  }
+  input[type=number] { width: 90px; }
+  button {
+    padding: 9px 20px; border: 0; border-radius: 7px; font-size: 15px;
+    font-weight: 600; cursor: pointer;
+  }
+  #btnProcess { background: var(--blue); color: #fff; }
+  #btnProcess:hover { background: var(--blue-dark); }
+  #btnDownload { background: #1d8a3c; color: #fff; display: none; }
+  #btnDownload:hover { background: #156b2e; }
+  #btnShare { background: #1a56b0; color: #fff; display: none; }
+  #btnShare:hover { background: #123c7c; }
+  button:disabled { background: #b8c0cd !important; cursor: default; }
+  #log {
+    white-space: pre-wrap; font-family: Consolas, monospace; font-size: 13px;
+    background: #0f1726; color: #d7e3f4; border-radius: 8px;
+    padding: 12px 14px; min-height: 40px; max-height: 220px; overflow-y: auto;
+  }
+  #log .warn { color: #ffcf5e; }
+  #log .err { color: #ff8d7a; }
+  .canvasWrap { display: flex; flex-wrap: wrap; gap: 14px; }
+  .canvasBox { flex: 1 1 480px; min-width: 300px; }
+  .canvasBox h3 { margin: 0 0 6px; font-size: 14px; color: #45536e; }
+  canvas {
+    width: 100%; border: 1px solid var(--border); border-radius: 8px;
+    background: #fff; display: block;
+  }
+  .hidden { display: none; }
+  footer { text-align: center; font-size: 12px; color: #7a879c; padding: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Blaty CNC — przygotowanie DXF pod maszynę</h1>
+  <p>Rozsuwa blaty z wybranej warstwy, zachowuje wymiary, obrót i otwory,
+     rozbija kontury na linie i łuki. Plik nie opuszcza Twojego komputera.</p>
+</header>
+<main>
+  <div class="panel">
+    <div id="dropzone">
+      <strong>Kliknij, aby wybrać plik DXF</strong> albo przeciągnij go tutaj
+      <div id="fileName" style="margin-top:8px;font-weight:600;color:#1c2330"></div>
+    </div>
+    <input type="file" id="fileInput" accept=".dxf,.zip">
+  </div>
+
+  <div class="panel hidden" id="optionsPanel">
+    <div class="row">
+      <label for="layerSelect">Warstwa:</label>
+      <select id="layerSelect"></select>
+      <label for="gapInput">Odstęp między blatami [mm]:</label>
+      <input type="number" id="gapInput" value="50" min="1" step="1">
+      <button id="btnProcess">Przetwórz</button>
+      <button id="btnDownload">Pobierz plik DXF</button>
+      <button id="btnShare">Udostępnij wynik</button>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="logPanel"><div id="log"></div></div>
+
+  <div class="panel hidden" id="previewPanel">
+    <div class="canvasWrap">
+      <div class="canvasBox">
+        <h3>PRZED — obiekty z wybranej warstwy</h3>
+        <canvas id="canvasBefore" width="900" height="560"></canvas>
+      </div>
+      <div class="canvasBox">
+        <h3>PO — wynik dla maszyny (niebieski: blat, czerwony: otwór)</h3>
+        <canvas id="canvasAfter" width="900" height="560"></canvas>
+      </div>
+    </div>
+  </div>
+</main>
+<footer>Blaty CNC · działa w 100% lokalnie w przeglądarce · format zapisu: DXF R12 (linie i łuki)</footer>
+
+<script>
+"use strict";
+
+/* ========================= USTAWIENIA ========================= */
+const DEFAULT_LAYER = "BLATY_KUCHENNE";
+const CLOSE_TOL = 1.0;      // mm — przerwa konturu domykana automatycznie
+const PT_EQ_TOL = 1e-6;
+
+/* ========================= GEOMETRIA ========================== */
+
+function arcCenter(x1, y1, x2, y2, bulge) {
+  const theta = 4 * Math.atan(bulge);
+  const chord = Math.hypot(x2 - x1, y2 - y1);
+  const r = chord / (2 * Math.abs(Math.sin(theta / 2)));
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const d = (chord / 2) / Math.tan(theta / 2);
+  const ux = (x2 - x1) / chord, uy = (y2 - y1) / chord;
+  return { cx: mx - uy * d, cy: my + ux * d, r };
+}
+
+function arcPoints(x1, y1, x2, y2, bulge, maxStepDeg = 5) {
+  const { cx, cy, r } = arcCenter(x1, y1, x2, y2, bulge);
+  const theta = 4 * Math.atan(bulge);
+  const a1 = Math.atan2(y1 - cy, x1 - cx);
+  const steps = Math.max(2, Math.ceil(Math.abs(theta * 180 / Math.PI) / maxStepDeg));
+  const pts = [];
+  for (let k = 1; k < steps; k++) {
+    const a = a1 + theta * k / steps;
+    pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return pts;
+}
+
+class Contour {
+  constructor(vertices) {         // [[x, y, bulge], ...] — zamknięty
+    this.v = vertices;
+    this._flat = null;
+  }
+  translate(dx, dy) {
+    this.v = this.v.map(([x, y, b]) => [x + dx, y + dy, b]);
+    this._flat = null;
+  }
+  flattened() {
+    if (this._flat) return this._flat;
+    const pts = [];
+    const n = this.v.length;
+    for (let i = 0; i < n; i++) {
+      const [x1, y1, b] = this.v[i];
+      const [x2, y2] = this.v[(i + 1) % n];
+      pts.push([x1, y1]);
+      if (Math.abs(b) > 1e-9) pts.push(...arcPoints(x1, y1, x2, y2, b));
+    }
+    this._flat = pts;
+    return pts;
+  }
+  bbox() {
+    const p = this.flattened();
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const [x, y] of p) {
+      if (x < x1) x1 = x; if (x > x2) x2 = x;
+      if (y < y1) y1 = y; if (y > y2) y2 = y;
+    }
+    return [x1, y1, x2, y2];
+  }
+  area() {
+    const p = this.flattened();
+    let s = 0;
+    for (let i = 0; i < p.length; i++) {
+      const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % p.length];
+      s += x1 * y2 - x2 * y1;
+    }
+    return Math.abs(s) / 2;
+  }
+  containsPoint(px, py) {
+    const p = this.flattened();
+    let inside = false;
+    for (let i = 0, n = p.length; i < n; i++) {
+      const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % n];
+      if ((y1 > py) !== (y2 > py)) {
+        const xc = x1 + (py - y1) * (x2 - x1) / (y2 - y1);
+        if (px < xc) inside = !inside;
+      }
+    }
+    return inside;
+  }
+  segments() {   // [{t:'L',x1,y1,x2,y2} | {t:'A',cx,cy,r,a1,a2}] — łuk CCW (DXF)
+    const segs = [];
+    const n = this.v.length;
+    for (let i = 0; i < n; i++) {
+      const [x1, y1, b] = this.v[i];
+      const [x2, y2] = this.v[(i + 1) % n];
+      if (Math.hypot(x2 - x1, y2 - y1) < PT_EQ_TOL) continue;
+      if (Math.abs(b) < 1e-9) {
+        segs.push({ t: "L", x1, y1, x2, y2 });
+      } else {
+        const { cx, cy, r } = arcCenter(x1, y1, x2, y2, b);
+        const deg = a => a * 180 / Math.PI;
+        const a1 = deg(Math.atan2(y1 - cy, x1 - cx));
+        const a2 = deg(Math.atan2(y2 - cy, x2 - cx));
+        segs.push(b > 0 ? { t: "A", cx, cy, r, a1, a2 }
+                        : { t: "A", cx, cy, r, a1: a2, a2: a1 });
+      }
+    }
+    return segs;
+  }
+}
+
+/* ======================= PARSER DXF =========================== */
+
+function parseTags(text) {
+  const lines = text.split(/\r\n|\n|\r/);
+  const tags = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const code = parseInt(lines[i].trim(), 10);
+    if (Number.isNaN(code)) continue;
+    tags.push([code, lines[i + 1].trim()]);
+  }
+  return tags;
+}
+
+/* Zwraca { layers: Map(nazwa -> liczba obiektów), entities: [...] }
+   entities: {type, layer, closed, verts:[[x,y,b],...]} lub {type:'CIRCLE',...} */
+function parseDXF(text) {
+  const tags = parseTags(text);
+  const layers = new Map();
+  const entities = [];
+  const unsupported = new Map();
+
+  // znajdź sekcję ENTITIES
+  let i = 0, start = -1, end = tags.length;
+  for (; i < tags.length - 1; i++) {
+    if (tags[i][0] === 0 && tags[i][1] === "SECTION" &&
+        tags[i + 1][0] === 2 && tags[i + 1][1] === "ENTITIES") { start = i + 2; break; }
+  }
+  if (start < 0) throw new Error("Nie znaleziono sekcji ENTITIES — to nie jest prawidłowy plik DXF (wymagany zapis ASCII, nie binarny).");
+  for (i = start; i < tags.length; i++) {
+    if (tags[i][0] === 0 && tags[i][1] === "ENDSEC") { end = i; break; }
+  }
+
+  // indeksy początków encji
+  const ents = [];
+  for (i = start; i < end; i++) if (tags[i][0] === 0) ents.push(i);
+  ents.push(end);
+
+  const bump = (map, key) => map.set(key, (map.get(key) || 0) + 1);
+
+  for (let e = 0; e < ents.length - 1; e++) {
+    const from = ents[e], to = ents[e + 1];
+    const type = tags[from][1];
+    let layer = "0";
+    for (let k = from + 1; k < to; k++) if (tags[k][0] === 8) { layer = tags[k][1]; break; }
+
+    if (type === "VERTEX" || type === "SEQEND") continue; // liczone z POLYLINE
+
+    if (type === "LWPOLYLINE") {
+      bump(layers, layer);
+      let closed = false;
+      const verts = [];
+      let cur = null;
+      for (let k = from + 1; k < to; k++) {
+        const [c, v] = tags[k];
+        if (c === 70) closed = (parseInt(v, 10) & 1) === 1;
+        else if (c === 10) { cur = [parseFloat(v), 0, 0]; verts.push(cur); }
+        else if (c === 20 && cur) cur[1] = parseFloat(v);
+        else if (c === 42 && cur) cur[2] = parseFloat(v);
+      }
+      entities.push({ type, layer, closed, verts });
+    } else if (type === "POLYLINE") {
+      bump(layers, layer);
+      let closed = false, skip = false;
+      for (let k = from + 1; k < to; k++) {
+        if (tags[k][0] === 70) {
+          const f = parseInt(tags[k][1], 10);
+          closed = (f & 1) === 1;
+          if (f & 8 || f & 16 || f & 64) skip = true;  // 3D / siatka
+        }
+      }
+      // zbierz VERTEX-y aż do SEQEND
+      const verts = [];
+      let e2 = e + 1;
+      for (; e2 < ents.length - 1; e2++) {
+        const f2 = ents[e2], t2 = ents[e2 + 1];
+        const ty2 = tags[f2][1];
+        if (ty2 === "SEQEND") break;
+        if (ty2 !== "VERTEX") break;
+        let x = 0, y = 0, b = 0, vflags = 0;
+        for (let k = f2 + 1; k < t2; k++) {
+          const [c, v] = tags[k];
+          if (c === 10) x = parseFloat(v);
+          else if (c === 20) y = parseFloat(v);
+          else if (c === 42) b = parseFloat(v);
+          else if (c === 70) vflags = parseInt(v, 10);
+        }
+        if (!(vflags & 16)) verts.push([x, y, b]); // pomiń punkty kontrolne splajnu
+      }
+      e = e2; // przeskocz VERTEX-y/SEQEND
+      if (!skip) entities.push({ type, layer, closed, verts });
+      else bump(unsupported, type + " (3D)");
+    } else if (type === "CIRCLE") {
+      bump(layers, layer);
+      let cx = 0, cy = 0, r = 0;
+      for (let k = from + 1; k < to; k++) {
+        const [c, v] = tags[k];
+        if (c === 10) cx = parseFloat(v);
+        else if (c === 20) cy = parseFloat(v);
+        else if (c === 40) r = parseFloat(v);
+      }
+      entities.push({ type, layer, cx, cy, r });
+    } else {
+      bump(layers, layer);
+      bump(unsupported, type);
+      entities.push({ type, layer, unsupported: true });
+    }
+  }
+  return { layers, entities, unsupported };
+}
+
+/* ==================== BUDOWA KONTURÓW ========================= */
+
+function buildContours(entities, layerName, log) {
+  const contours = [];
+  let skipped = 0;
+  const skippedTypes = new Map();
+  for (const e of entities) {
+    if (e.layer.toUpperCase() !== layerName.toUpperCase()) continue;
+    if (e.unsupported) {
+      skipped++;
+      skippedTypes.set(e.type, (skippedTypes.get(e.type) || 0) + 1);
+      continue;
+    }
+    if (e.type === "CIRCLE") {
+      contours.push(new Contour([[e.cx + e.r, e.cy, 1], [e.cx - e.r, e.cy, 1]]));
+      continue;
+    }
+    let pts = e.verts.slice();
+    if (pts.length < 2) { skipped++; continue; }
+    const [x1, y1] = pts[0];
+    const [x2, y2, b2] = pts[pts.length - 1];
+    const gap = Math.hypot(x2 - x1, y2 - y1);
+    if (gap < PT_EQ_TOL && Math.abs(b2) < 1e-9) {
+      pts = pts.slice(0, -1);              // duplikat punktu początkowego
+    } else if (!e.closed && gap > CLOSE_TOL) {
+      log(`UWAGA: polilinia jest otwarta (przerwa ${gap.toFixed(1)} mm) — została domknięta odcinkiem. Sprawdź rysunek!`, "warn");
+    } else if (!e.closed && gap > PT_EQ_TOL) {
+      log(`Info: polilinia domknięta automatycznie (przerwa ${gap.toFixed(3)} mm).`);
+    }
+    if (pts.length >= 2) contours.push(new Contour(pts));
+    else skipped++;
+  }
+  for (const [type, count] of skippedTypes)
+    log(`UWAGA: pominięto ${count} obiektów typu ${type} (obsługiwane: polilinie i okręgi).`, "warn");
+  return contours;
+}
+
+/* ==================== GRUPOWANIE ============================== */
+
+function groupContours(contours) {
+  const n = contours.length;
+  const parent = new Array(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    const [px, py] = contours[i].flattened()[0];
+    let best = -1, bestArea = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      const [bx1, by1, bx2, by2] = contours[j].bbox();
+      if (px < bx1 - 1e-6 || px > bx2 + 1e-6 || py < by1 - 1e-6 || py > by2 + 1e-6) continue;
+      if (contours[j].area() <= contours[i].area()) continue;
+      if (contours[j].containsPoint(px, py)) {
+        const a = contours[j].area();
+        if (a < bestArea) { best = j; bestArea = a; }
+      }
+    }
+    parent[i] = best;
+  }
+  const groups = [], idxMap = new Map();
+  for (let i = 0; i < n; i++) {
+    if (parent[i] === -1) {
+      idxMap.set(i, groups.length);
+      groups.push({ outer: contours[i], holes: [] });
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    if (parent[i] !== -1) {
+      let top = parent[i];
+      while (parent[top] !== -1) top = parent[top];
+      groups[idxMap.get(top)].holes.push(contours[i]);
+    }
+  }
+  return groups;
+}
+
+function groupBBox(g) {
+  let [x1, y1, x2, y2] = g.outer.bbox();
+  for (const h of g.holes) {
+    const b = h.bbox();
+    x1 = Math.min(x1, b[0]); y1 = Math.min(y1, b[1]);
+    x2 = Math.max(x2, b[2]); y2 = Math.max(y2, b[3]);
+  }
+  return [x1, y1, x2, y2];
+}
+
+/* ==================== ROZSUWANIE ============================== */
+
+function separateGroups(groups, gap) {
+  const n = groups.length;
+  const boxes = groups.map(g => groupBBox(g).slice());
+  const offsets = groups.map(() => [0, 0]);
+  const eps = 0.01;
+  const shift = (k, dx, dy) => {
+    boxes[k][0] += dx; boxes[k][2] += dx;
+    boxes[k][1] += dy; boxes[k][3] += dy;
+    offsets[k][0] += dx; offsets[k][1] += dy;
+  };
+  let converged = false;
+  for (let it = 0; it < 2000; it++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = boxes[i], b = boxes[j];
+        const sepX = Math.max(a[0] - b[2], b[0] - a[2]);
+        const sepY = Math.max(a[1] - b[3], b[1] - a[3]);
+        if (sepX >= gap || sepY >= gap) continue;
+        moved = true;
+        const pushX = gap - sepX + eps;
+        const pushY = gap - sepY + eps;
+        if (pushX <= pushY) {
+          const s = ((b[0] + b[2]) / 2 >= (a[0] + a[2]) / 2) ? 1 : -1;
+          shift(i, -s * pushX / 2, 0); shift(j, s * pushX / 2, 0);
+        } else {
+          const s = ((b[1] + b[3]) / 2 >= (a[1] + a[3]) / 2) ? 1 : -1;
+          shift(i, 0, -s * pushY / 2); shift(j, 0, s * pushY / 2);
+        }
+      }
+    }
+    if (!moved) { converged = true; break; }
+  }
+  if (!converged) {   // awaryjnie: układ w jednym rzędzie
+    const order = groups.map((_, k) => k)
+      .sort((p, q) => boxes[p][0] - boxes[q][0] || boxes[p][1] - boxes[q][1]);
+    let x = 0;
+    for (const k of order) {
+      const [bx1, by1, bx2] = groupBBox(groups[k]);
+      offsets[k] = [x - bx1, -by1];
+      x += (bx2 - bx1) + gap;
+    }
+  }
+  groups.forEach((g, k) => {
+    const [dx, dy] = offsets[k];
+    if (dx || dy) {
+      g.outer.translate(dx, dy);
+      g.holes.forEach(h => h.translate(dx, dy));
+    }
+  });
+  return offsets;
+}
+
+/* ==================== ZAPIS DXF R12 =========================== */
+
+function fmt(n) {
+  let s = n.toFixed(6);
+  s = s.replace(/0+$/, "").replace(/\.$/, ".0");
+  return s;
+}
+
+function writeDXF(groups, layerName) {
+  const out = [];
+  const tag = (c, v) => { out.push(String(c), String(v)); };
+
+  // zasięg rysunku
+  let ex1 = Infinity, ey1 = Infinity, ex2 = -Infinity, ey2 = -Infinity;
+  for (const g of groups) {
+    const [x1, y1, x2, y2] = groupBBox(g);
+    ex1 = Math.min(ex1, x1); ey1 = Math.min(ey1, y1);
+    ex2 = Math.max(ex2, x2); ey2 = Math.max(ey2, y2);
+  }
+
+  tag(0, "SECTION"); tag(2, "HEADER");
+  tag(9, "$ACADVER"); tag(1, "AC1009");
+  tag(9, "$EXTMIN"); tag(10, fmt(ex1)); tag(20, fmt(ey1)); tag(30, "0.0");
+  tag(9, "$EXTMAX"); tag(10, fmt(ex2)); tag(20, fmt(ey2)); tag(30, "0.0");
+  tag(0, "ENDSEC");
+
+  tag(0, "SECTION"); tag(2, "TABLES");
+  tag(0, "TABLE"); tag(2, "LTYPE"); tag(70, 1);
+  tag(0, "LTYPE"); tag(2, "CONTINUOUS"); tag(70, 0);
+  tag(3, "Solid line"); tag(72, 65); tag(73, 0); tag(40, "0.0");
+  tag(0, "ENDTAB");
+  tag(0, "TABLE"); tag(2, "LAYER"); tag(70, 1);
+  tag(0, "LAYER"); tag(2, layerName); tag(70, 0); tag(62, 7); tag(6, "CONTINUOUS");
+  tag(0, "ENDTAB");
+  tag(0, "ENDSEC");
+
+  tag(0, "SECTION"); tag(2, "ENTITIES");
+  let nLines = 0, nArcs = 0;
+  for (const g of groups) {
+    for (const c of [g.outer, ...g.holes]) {
+      for (const s of c.segments()) {
+        if (s.t === "L") {
+          tag(0, "LINE"); tag(8, layerName);
+          tag(10, fmt(s.x1)); tag(20, fmt(s.y1)); tag(30, "0.0");
+          tag(11, fmt(s.x2)); tag(21, fmt(s.y2)); tag(31, "0.0");
+          nLines++;
+        } else {
+          tag(0, "ARC"); tag(8, layerName);
+          tag(10, fmt(s.cx)); tag(20, fmt(s.cy)); tag(30, "0.0");
+          tag(40, fmt(s.r)); tag(50, fmt(s.a1)); tag(51, fmt(s.a2));
+          nArcs++;
+        }
+      }
+    }
+  }
+  tag(0, "ENDSEC");
+  tag(0, "EOF");
+  return { text: out.join("\r\n") + "\r\n", nLines, nArcs };
+}
+
+/* ==================== PROCES GŁÓWNY =========================== */
+
+function processLayer(entities, layerName, gap, log) {
+  const contours = buildContours(entities, layerName, log);
+  if (!contours.length)
+    throw new Error(`Brak obsługiwanych obiektów na warstwie "${layerName}".`);
+  log(`Znaleziono ${contours.length} zamkniętych konturów na warstwie "${layerName}".`);
+  const groups = groupContours(contours);
+  const nHoles = groups.reduce((s, g) => s + g.holes.length, 0);
+  log(`Rozpoznano: ${groups.length} blatów, ${nHoles} otworów (otwory pozostają nieruchome względem swoich blatów).`);
+  groups.forEach((g, i) => {
+    const [x1, y1, x2, y2] = g.outer.bbox();
+    log(`  Blat ${i + 1}: ${(x2 - x1).toFixed(1)} x ${(y2 - y1).toFixed(1)} mm, otworów: ${g.holes.length}`);
+  });
+  const offsets = separateGroups(groups, gap);
+  const moved = offsets.filter(([dx, dy]) => Math.abs(dx) > 1e-9 || Math.abs(dy) > 1e-9).length;
+  log(`Rozsunięto blaty (odstęp min. ${gap} mm) — przesunięto ${moved} z ${groups.length} blatów.`);
+  const dxf = writeDXF(groups, layerName);
+  log(`Wynik: ${dxf.nLines} linii, ${dxf.nArcs} łuków (DXF R12), tylko warstwa "${layerName}".`);
+  return { groups, dxf };
+}
+
+/* ==================== RYSOWANIE =============================== */
+
+function contourPath(c) {
+  const p = c.flattened().slice();
+  p.push(p[0]);
+  return p;
+}
+
+function drawGroups(canvas, groupsOrContours, colored) {
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const paths = [];
+  if (colored) {
+    for (const g of groupsOrContours) {
+      paths.push({ pts: contourPath(g.outer), col: "#1a56b0" });
+      for (const h of g.holes) paths.push({ pts: contourPath(h), col: "#c62817" });
+    }
+  } else {
+    for (const c of groupsOrContours) paths.push({ pts: contourPath(c), col: "#5b6b80" });
+  }
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const { pts } of paths) for (const [x, y] of pts) {
+    if (x < x1) x1 = x; if (x > x2) x2 = x;
+    if (y < y1) y1 = y; if (y > y2) y2 = y;
+  }
+  const m = 20;
+  const s = Math.min((canvas.width - 2 * m) / Math.max(x2 - x1, 1e-6),
+                     (canvas.height - 2 * m) / Math.max(y2 - y1, 1e-6));
+  const ox = (canvas.width - (x2 - x1) * s) / 2;
+  const oy = (canvas.height - (y2 - y1) * s) / 2;
+  const tx = x => ox + (x - x1) * s;
+  const ty = y => canvas.height - oy - (y - y1) * s;
+  ctx.lineWidth = 1.6;
+  for (const { pts, col } of paths) {
+    ctx.strokeStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(tx(pts[0][0]), ty(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(tx(pts[i][0]), ty(pts[i][1]));
+    ctx.stroke();
+  }
+}
+
+/* ==================== INTERFEJS =============================== */
+
+const $ = id => document.getElementById(id);
+let parsedFile = null;      // {layers, entities, unsupported}
+let baseName = "wynik";
+let resultDXF = null;
+
+function log(msg, cls) {
+  const el = $("log");
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = msg + "\n";
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+function clearLog() { $("log").innerHTML = ""; }
+
+function decodeDXF(buffer) {
+  let text = new TextDecoder("utf-8").decode(buffer);
+  const m = text.match(/\$DWGCODEPAGE[\s\S]{0,40}?ANSI_(\d+)/i);
+  const isNew = /\$ACADVER[\s\S]{0,40}?AC10(2[1-9]|[3-9]\d)/.test(text); // R2007+ = UTF-8
+  if (m && !isNew) {
+    try { text = new TextDecoder("windows-" + m[1]).decode(buffer); } catch (e) {}
+  }
+  return text;
+}
+
+/* ==================== ZIP (minimalny czytnik) ================= */
+
+function isZip(buffer, name) {
+  const b = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
+  return (b.length === 4 && b[0] === 0x50 && b[1] === 0x4B && b[2] === 0x03 && b[3] === 0x04) ||
+         /\.zip$/i.test(name || "");
+}
+
+// zwraca { name, data: ArrayBuffer } pierwszego wpisu .dxf z archiwum ZIP
+async function extractDxfFromZip(buffer) {
+  const dv = new DataView(buffer);
+  const u8 = new Uint8Array(buffer);
+  let eocd = -1;
+  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 22 - 65535); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("Uszkodzony plik ZIP (brak katalogu centralnego).");
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const dec = new TextDecoder("utf-8");
+  for (let n = 0; n < count; n++) {
+    if (p + 46 > buffer.byteLength || dv.getUint32(p, true) !== 0x02014b50)
+      throw new Error("Uszkodzony plik ZIP (błędny katalog centralny).");
+    const flags = dv.getUint16(p + 8, true);
+    const method = dv.getUint16(p + 10, true);
+    const csize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commLen = dv.getUint16(p + 32, true);
+    const lho = dv.getUint32(p + 42, true);
+    const fullName = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commLen;
+    if (fullName.endsWith("/") || !/\.dxf$/i.test(fullName)) continue;
+
+    if (flags & 1) throw new Error("Plik DXF w archiwum ZIP jest zaszyfrowany.");
+    if (lho + 30 > buffer.byteLength || dv.getUint32(lho, true) !== 0x04034b50)
+      throw new Error("Uszkodzony plik ZIP (błędny nagłówek lokalny).");
+    const dataStart = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+    const raw = u8.subarray(dataStart, dataStart + csize);
+    const name = fullName.split("/").pop();
+    if (method === 0) return { name, data: raw.slice().buffer };
+    if (method === 8) {
+      if (typeof DecompressionStream === "undefined")
+        throw new Error("Ta przeglądarka nie obsługuje rozpakowywania ZIP (brak DecompressionStream).");
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      return { name, data: await new Response(stream).arrayBuffer() };
+    }
+    throw new Error(`Nieobsługiwana metoda kompresji ZIP (${method}) — obsługiwane: store i deflate.`);
+  }
+  throw new Error("W archiwum ZIP nie znaleziono pliku .dxf.");
+}
+
+function handleFile(file, onLoaded) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      let buffer = reader.result, fname = file.name, zipNote = null;
+      if (isZip(buffer, file.name)) {
+        const z = await extractDxfFromZip(buffer);
+        buffer = z.data; fname = z.name;
+        zipNote = `ZIP: wydobyto ${z.name}`;
+      }
+      const text = decodeDXF(buffer);
+      parsedFile = parseDXF(text);
+      baseName = fname.replace(/\.dxf$/i, "");
+      $("fileName").textContent = "Wczytano: " + file.name + (zipNote ? " → " + fname : "");
+      clearLog();
+      if (zipNote) log(zipNote);
+      $("logPanel").classList.remove("hidden");
+      $("previewPanel").classList.add("hidden");
+      $("btnDownload").style.display = "none";
+      updateShareButton();
+      resultDXF = null;
+
+      // wypełnij listę warstw (tylko warstwy z obiektami)
+      const sel = $("layerSelect");
+      sel.innerHTML = "";
+      const names = [...parsedFile.layers.keys()].sort((a, b) => a.localeCompare(b, "pl"));
+      for (const name of names) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = `${name} (${parsedFile.layers.get(name)} obiektów)`;
+        sel.appendChild(opt);
+      }
+      const def = names.find(n => n.toUpperCase() === DEFAULT_LAYER);
+      if (def) sel.value = def;
+      else log(`UWAGA: w pliku nie ma obiektów na warstwie "${DEFAULT_LAYER}" — wybierz warstwę z listy.`, "warn");
+      $("optionsPanel").classList.remove("hidden");
+      log(`Plik wczytany. Warstw z obiektami: ${names.length}. Wybierz warstwę i kliknij „Przetwórz".`);
+      if (onLoaded) onLoaded(!!def);
+    } catch (err) {
+      clearLog();
+      $("logPanel").classList.remove("hidden");
+      log("BŁĄD: " + err.message, "err");
+      $("optionsPanel").classList.add("hidden");
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function runProcess() {
+  if (!parsedFile) return;
+  const layerName = $("layerSelect").value;
+  const gap = parseFloat(String($("gapInput").value).replace(",", "."));
+  if (!(gap > 0)) { alert("Nieprawidłowy odstęp (mm)."); return; }
+  clearLog();
+  try {
+    const before = buildContours(parsedFile.entities, layerName, () => {});
+    const { groups, dxf } = processLayer(parsedFile.entities, layerName, gap, log);
+    resultDXF = dxf.text;
+    drawGroups($("canvasBefore"), before, false);
+    drawGroups($("canvasAfter"), groups, true);
+    $("previewPanel").classList.remove("hidden");
+    $("btnDownload").style.display = "inline-block";
+    updateShareButton();
+    log('GOTOWE. Kliknij „Pobierz plik DXF".');
+  } catch (err) {
+    log("BŁĄD: " + err.message, "err");
+    $("previewPanel").classList.add("hidden");
+    $("btnDownload").style.display = "none";
+    updateShareButton();
+  }
+}
+
+function resultFileName() { return baseName + "_MASZYNA.dxf"; }
+
+function download() {
+  if (!resultDXF) return;
+  const blob = new Blob([resultDXF], { type: "application/dxf" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = resultFileName();
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ==================== PWA: UDOSTĘPNIANIE ====================== */
+
+function makeResultFile() {
+  return new File([resultDXF], resultFileName(), { type: "application/octet-stream" });
+}
+
+function canShareFiles() {
+  try {
+    return !!(resultDXF && navigator.share && navigator.canShare &&
+              navigator.canShare({ files: [makeResultFile()] }));
+  } catch (e) { return false; }
+}
+
+function updateShareButton() {
+  $("btnShare").style.display = canShareFiles() ? "inline-block" : "none";
+}
+
+async function shareResult() {
+  if (!resultDXF) return;
+  try {
+    await navigator.share({ files: [makeResultFile()], title: resultFileName() });
+  } catch (err) {
+    if (err && err.name !== "AbortError") log("BŁĄD udostępniania: " + err.message, "err");
+  }
+}
+
+// plik przekazany przez Android Share Target (zapisany przez service worker w Cache API)
+async function loadSharedFile() {
+  $("logPanel").classList.remove("hidden");
+  try {
+    if (!("caches" in window)) throw new Error("brak obsługi Cache API");
+    const cache = await caches.open("shared-file");
+    const res = await cache.match("shared-dxf");
+    if (!res) {
+      log("BŁĄD: nie znaleziono udostępnionego pliku (spróbuj udostępnić go ponownie lub wybierz ręcznie).", "err");
+      return;
+    }
+    let name = "udostepniony.dxf";
+    try { name = decodeURIComponent(res.headers.get("X-File-Name") || name); } catch (e) {}
+    const blob = await res.blob();
+    await cache.delete("shared-dxf");
+    history.replaceState(null, "", location.pathname);
+    handleFile(new File([blob], name), hasDefault => {
+      if (hasDefault) { log(`Udostępniony plik: ${name} — przetwarzam automatycznie.`); runProcess(); }
+      else log(`Udostępniony plik: ${name} — brak warstwy ${DEFAULT_LAYER}, wybierz warstwę ręcznie.`, "warn");
+    });
+  } catch (err) {
+    log("BŁĄD odczytu udostępnionego pliku: " + err.message, "err");
+  }
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch(err => console.warn("SW:", err));
+}
+if (new URLSearchParams(location.search).get("share-target") === "1") loadSharedFile();
+
+$("btnShare").addEventListener("click", shareResult);
+$("dropzone").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", e => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+$("dropzone").addEventListener("dragover", e => {
+  e.preventDefault(); $("dropzone").classList.add("drag");
+});
+$("dropzone").addEventListener("dragleave", () => $("dropzone").classList.remove("drag"));
+$("dropzone").addEventListener("drop", e => {
+  e.preventDefault(); $("dropzone").classList.remove("drag");
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+$("btnProcess").addEventListener("click", runProcess);
+$("btnDownload").addEventListener("click", download);
+
+// do testów automatycznych
+window.BlatyCNC = { parseDXF, buildContours, processLayer, writeDXF, decodeDXF, handleFile };
+</script>
+</body>
+</html>
