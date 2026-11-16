@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "blaty-cnc-v3";
+const CACHE = "blaty-cnc-v4";
 const SHARED_CACHE = "shared-file";
 const SHARED_KEY = "shared-dxf";
 const SHELL = [
@@ -48,13 +48,18 @@ self.addEventListener("fetch", event => {
     return;
   }
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
+  // pliki do pobrania (np. APK) omijają SW i cache w całości
+  if (/\.(apk|zip|dxf)$/i.test(url.pathname)) return;
 
   // stale-while-revalidate (parametry zapytania ignorowane, by ?share-target=1 trafiało w cache)
   event.respondWith(
     caches.open(CACHE).then(async cache => {
       const cached = await cache.match(req, { ignoreSearch: true });
+      // nawigację zapisuj pod "./" tylko dla samej strony — nigdy dla innych ścieżek
+      const isPage = url.pathname.endsWith("/") || url.pathname.endsWith("/index.html");
       const network = fetch(req).then(res => {
-        if (res && res.ok) cache.put(req.mode === "navigate" ? "./" : req, res.clone());
+        if (res && res.ok && (req.mode !== "navigate" || isPage))
+          cache.put(req.mode === "navigate" ? "./" : req, res.clone());
         return res;
       }).catch(() => null);
       if (cached) { event.waitUntil(network); return cached; }
