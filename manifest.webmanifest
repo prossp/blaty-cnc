@@ -21,7 +21,7 @@
       "files": [
         {
           "name": "file",
-          "accept": ["application/dxf", "image/vnd.dxf", "image/x-dxf", "application/octet-stream", "text/plain", ".dxf", "application/zip", "application/x-zip-compressed", ".zip"]
+          "accept": ["application/zip", "application/x-zip-compressed", "application/octet-stream", "application/dxf", "image/vnd.dxf", "image/x-dxf", "text/plain", "application/*", "*/*", ".zip", ".dxf"]
         }
       ]
     }
