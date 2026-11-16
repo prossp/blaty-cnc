@@ -749,8 +749,22 @@ function runProcess() {
 
 function resultFileName() { return baseName + "_MASZYNA.dxf"; }
 
+// tekst -> base64 (UTF-8), po kawałkach, żeby nie przepełnić stosu
+function textToBase64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
 function download() {
   if (!resultDXF) return;
+  if (window.AndroidBridge) {
+    AndroidBridge.saveFile(resultFileName(), textToBase64(resultDXF));
+    return;
+  }
   const blob = new Blob([resultDXF], { type: "application/dxf" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -766,6 +780,7 @@ function makeResultFile() {
 }
 
 function canShareFiles() {
+  if (window.AndroidBridge) return !!resultDXF;
   try {
     return !!(resultDXF && navigator.share && navigator.canShare &&
               navigator.canShare({ files: [makeResultFile()] }));
@@ -778,6 +793,10 @@ function updateShareButton() {
 
 async function shareResult() {
   if (!resultDXF) return;
+  if (window.AndroidBridge) {
+    AndroidBridge.shareFile(resultFileName(), textToBase64(resultDXF));
+    return;
+  }
   try {
     await navigator.share({ files: [makeResultFile()], title: resultFileName() });
   } catch (err) {
@@ -815,6 +834,24 @@ async function loadSharedFile(expected) {
     log("BŁĄD odczytu udostępnionego pliku: " + err.message, "err");
   }
 }
+
+// plik przekazany przez natywną aplikację Android (WebView) — wołane z MainActivity
+window.receiveSharedFile = function (name, b64) {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    $("logPanel").classList.remove("hidden");
+    handleFile(new File([bytes], name), hasDefault => {
+      log("Odebrano z udostępnienia: " + name);
+      if (hasDefault) runProcess();
+      else log(`Brak warstwy ${DEFAULT_LAYER} — wybierz warstwę ręcznie.`, "warn");
+    });
+  } catch (err) {
+    $("logPanel").classList.remove("hidden");
+    log("BŁĄD odbioru udostępnionego pliku: " + err.message, "err");
+  }
+};
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(err => console.warn("SW:", err));
